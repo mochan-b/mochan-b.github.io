@@ -5,9 +5,8 @@
 layout: home
 ---
 
+| |
+| :---: |
 | [![Mochan](assets/Mochan2013s.jpg)](assets/Mochan2013.jpg) | 
+| |
 
-
-- Software/Code
-- Publications/Writing
-  
