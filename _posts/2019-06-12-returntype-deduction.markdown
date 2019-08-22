@@ -6,11 +6,9 @@ categories: c++
 tags: c++
 ---
 
-# Deduce Return Type of a Function
-
 C++ functions can have return type `auto` and it is not always obvious what the return type of a function is. The return type can be dependent on template parameters.
 
-## `decltype` for return type
+## Return type using decltype
 
 Suppose we have the function `foo()` as follows:
 
