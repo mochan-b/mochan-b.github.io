@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Deduce Return Type of a Function"
+title:  "Deduce Return Type of a Function in C++"
 date:   2019-06-12 23:00:00 +0000
 categories: c++
 tags: c++
