@@ -6,7 +6,7 @@ categories: c++
 tags: c++
 ---
 
-C++ functions can have return type `auto` and it is not always obvious what the return type of a function is. The return type can be dependent on template parameters as well.
+C++ functions can have return type `auto` and it is not always obvious what the return type of a function is. The return type can be dependent on template parameters as well. In this article, we'll go over finding the return type of a function for compile time use. I will also go over the tricks to get the compiler to tell us the type so it's not a big guessing game.
 
 ## Return type using decltype
 
