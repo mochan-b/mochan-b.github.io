@@ -6,11 +6,9 @@ categories: c# wpf keyboard-accelerators
 tags: c# wpf keyboard-accelerators
 ---
 
+This is a simple example of how to implement a keyboard shortcut in C# WPF. I couldn't get a lot of code samples available out there to work so this is just a minimal example of one menu command.
+
 [Link with repo with example source code](https://github.com/mochan-b/KeyboardShortcuts)
-
-## Introduction
-
-This is a simple example of how to implement a keyboard shortcut in C# WPF. I couldn't get a lot of code samples on StackOverflow to work so this is just a minimal example of one menu command.
 
 ## Steps
 

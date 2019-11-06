@@ -6,7 +6,7 @@ categories: c++
 tags: c++
 ---
 
-C++ functions can have return type `auto` and it is not always obvious what the return type of a function is. The return type can be dependent on template parameters.
+C++ functions can have return type `auto` and it is not always obvious what the return type of a function is. The return type can be dependent on template parameters as well.
 
 ## Return type using decltype
 

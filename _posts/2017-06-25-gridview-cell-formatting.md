@@ -6,10 +6,6 @@ categories: c# wpf gridview
 tags: c# wpf gridview
 ---
 
-[Link to the repo with the example source code](https://github.com/mochan-b/GridViewCellFormatting)
-
-## Introduction
-
 XAML sometimes feels like a bunch of random magic incantations. There is obviously some detailed model of how things work but sometimes it just gets in the way of doing something simple.
 
 Here, we will explore three simple `GridView` presentations and the data binding for them.
@@ -19,6 +15,8 @@ Here, we will explore three simple `GridView` presentations and the data binding
 3. Format individual cells (*ultra-bold, red cells for value of 6 of the second column*)
 
 ![Columns with formatting](/assets/GridViewColumns.png)
+
+[Link to the repo with the example source code](https://github.com/mochan-b/GridViewCellFormatting)
 
 ## WPF Data Binding Model
 

@@ -6,17 +6,13 @@ categories: c# wpf data-binding listview listbox
 tags: c# wpf data-binding listview listbox
 ---
 
-[Example source code repo](https://github.com/mochan-b/ListViewAndListBoxDataBinding)
-
-## Introduction
-
-In this article, I want to explore the tricky aspects of data binding for ListView and ListBox. 
+In this article, I want to explore the tricky aspects of data binding for ListView and ListBox. There are a bunch of small caveats to achieving this and I will go into minimal example illustrating how to do this.
 
 1. When we add or remove items from the data-bound list, the ListView or ListBox should also update. 
-1. When items in the list are modified, the UI should also update.
-1. When the reference for the list itself is changed by creating a new list.
+2. When items in the list are modified, the UI should also update.
+3. When the reference for the list itself is changed by creating a new list.
 
-There are a bunch of small caveats to achieving this and I will go into minimal example illustrating how to do this.
+[Example source code repo](https://github.com/mochan-b/ListViewAndListBoxDataBinding)
 
 ## Test Example
 
