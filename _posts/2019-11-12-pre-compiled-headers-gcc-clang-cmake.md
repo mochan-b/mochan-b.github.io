@@ -14,6 +14,7 @@ Project files are located [here](https://github.com/mochan-b/pch-cmake).
 Suppose we have the follwing header file `hello.h` and source file `main.cpp`
 
 ```cpp
+#pragma once
 #include <iostream>
 
 template<typename T>
@@ -76,13 +77,7 @@ Clang works in a similar way to g++. We first create the precompiled header file
 clang++ -stdlib=libstdc++ -x c++-header hello.h -o hello.h.pch
 ```
 
-Different from `g++`, we have to remove the `#include "hello.h"` from the source file `main.cpp` and add the include in the command line. So, our `main.cpp` will look like only.
-
-```cpp
-int main() {
-        say("hello world");
-}
-```
+Different from `g++`, we have to add the include in the command line. We can also remove the `#include "hello.h"` from the source file `main.cpp` but it will just be included twice and ignored the second time from the header guard.
 
 We build the binary using the following command line. Note the inclusion of the header file using the command line.
 
