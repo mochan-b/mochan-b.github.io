@@ -85,8 +85,6 @@ We build the binary using the following command line. Note the inclusion of the 
 clang++ -stdlib=libstdc++ -include hello.h main.cpp -o main
 ```
 
-Unlike `gcc` where the usage of the pre-compiled header is almost invisible, we have to explicitly remove it from the source code and add it to the command line. 
-
 Another thing to note is that if I modify the header and use an outdated pre-compiled header file, I get an error from clang. Whereas g++ would happily produce an outdated binary, clang will throw an error and stop the compilation.
 
 ```bash
@@ -101,7 +99,7 @@ Similarly as g++, clang also reduced the compilation times after using pre-compi
 
 ## CMake Pre-Compiled Headers
 
-CMake uses the `clang` method (which would also work for g++). We use the `target_precompile_headers` in CMake to use pre-compiled headers. The include in the `main.cpp` of `hello.h` has to be removed.
+CMake uses the `clang` method (which would also work for g++). We use the `target_precompile_headers` in CMake to use pre-compiled headers. 
 
 Thus, our CMake file for our project would be 
 
@@ -243,15 +241,7 @@ target_include_directories(catch-test2 PUBLIC Catch2/single_include/catch2/)
 
 Compilation and re-compilation all takes about 5.6s
 
-To use the pre-compiled headers, we remove all the header information from the main file and we are left with the following.
-
-```cpp
-TEST_CASE( "Two and Two is Four", "[2+2=4]" ) {
-    REQUIRE( 2+2 == 3 );
-}
-```
-
-and the corresponding CMake to compile the project
+To use the pre-compiled headers, we use the corresponding CMake to compile the project
 
 ```cmake
 add_executable(catch-test catch-test.cpp)
