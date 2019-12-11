@@ -153,6 +153,72 @@ Using `clang` produces a `pch` file rather than a `gch` file.
 
 ## Pre-Compiled Catch2 Header for Faster Unit Testing
 
+The basic `catch2` test is the following (`catch-test.cpp`)
+
+```cpp
+#include "catch.hpp"
+
+TEST_CASE( "Two and Two is Four", "[2+2=4]" ) {
+    REQUIRE( 2+2 == 5 );
+}
+```
+
+To include a main, we have another file with the `Catch2` main in the file `catch-main.cpp`.
+
+```cpp
+#define CATCH_CONFIG_MAIN
+#include "catch.hpp"
+```
+
+Note that each of the file uses `catch.hpp` in different ways with a macro in front changing how it is included. With `CATCH_CONFIG_MAIN`, a main is included and in the other case it is not included.
+
+This different way of including `catch.hpp` is a problem with pre-compiled headers because one pre-compilation will not work with the other.
+
+If we use the pre-compiled header with the `main` included using the `CATCH_CONFIG_MAIN` macro, then the `main` will be added to every file in the project and get multiple definitions of `main`. 
+
+If the pre-compiled header is without the `CATCH_CONFIG_MAIN` macro, then then no file can have a `main` function. 
+
+To get around the problem, we put the main in a shared library and our test in a different library.
+
+Thus, our cmake looks like the following for the shared library
+
+```cmake
+add_library(catch2_main STATIC catch-main.cpp)
+target_include_directories(catch2_main PUBLIC Catch2/single_include/catch2/)
+```
+
+To use it without using pre-compiled headers, we would use it the following way:
+```cmake
+add_executable(catch-test2 catch-test.cpp)
+target_include_directories(catch-test2 PUBLIC Catch2/single_include/catch2/)
+target_link_libraries(catch-test2 catch2_main)
+```
+
+Using the pre-compiled header for our tests and using the shared library with the Catch2 main
+
+```cmake
+add_executable(catch-test catch-test.cpp)
+target_link_libraries(catch-test catch2_main)
+target_compile_definitions(catch-test PRIVATE CATCH_CONFIG_FAST_COMPILE CATCH_CONFIG_DISABLE_MATCHERS)
+target_precompile_headers(catch-test PRIVATE Catch2/single_include/catch2/catch.hpp)
+```
+
+### Compilation Times
+
+Without using the pre-compiled headers, the full compilation are the following
+
+-  `catch2_main` shared library : 5.04s
+-  `catch-test2` not using pre-compiled headers : 1.12s
+-  `catch-test2` not using pre-compiled headers - test recompilation : 1.13s
+-  `catch-test` using pre-compiled headers : 1.31s
+-  `catch-test` using pre-compiled headers - test recompilation : 0.69ss
+
+The test recompilation time improved by around 0.45s which is about 40% reduction in compilation time.
+
+## Obsolete - Pre-Compiled Catch2 Header for Faster Unit Testing
+
+_This section is obsolete. It uses a slow method of compiling catch2 and not recommended. I have kept the section for didactic purposes._
+
 Lets try to use pre-compiled headers on `catch2` unit testing framework that is header only and has a long compile time.
 
 Our project has `Catch2` as a submodule from the `github` repo. Thus, the single include header file is at the location `Catch2/single_include/catch2/catch.hpp`.
@@ -206,4 +272,5 @@ Using pre-compiled headers reduces the compilation time. With the support by `cm
 - [`clang` documentation of pre-compiled headers](https://clang.llvm.org/docs/UsersManual.html#usersmanual-precompiled-headers)
 - [`cmake` reference on `target_precompile_headers`](https://cmake.org/cmake/help/latest/command/target_precompile_headers.html)
 - [`catch2` github page](https://github.com/catchorg/Catch2)
+- [`catch2` fast compilation reference](https://github.com/catchorg/Catch2/blob/master/docs/slow-compiles.md)
 - [Project files for this post](https://github.com/mochan-b/pch-cmake)
