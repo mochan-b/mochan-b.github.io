@@ -1,0 +1,300 @@
+---
+layout: post
+title:  "Whisper Pyannote Fusion"
+date:   2023-09-07 23:15:00 +0000
+categories: deep-learning whisper pyannote asr diarization
+tags: deep-learning
+---
+
+In this article, we explore the methods for fusing the outputs of whisper (which does automatic speech recognition) and pyannote (which does speaker identification and segmenting).
+
+<head>
+    <title>Introduction</title>
+    <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+*  Copyright (c) Microsoft Corporation. All rights reserved.
+*  Licensed under the MIT License. See License.txt in the project root for license information.
+*--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only] {
+display: none;
+}
+
+</style>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex/dist/katex.min.css">
+<link href="https://cdn.jsdelivr.net/npm/katex-copytex@latest/dist/katex-copytex.min.css" rel="stylesheet" type="text/css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+    </style>
+    <style>
+.task-list-item {
+list-style-type: none;
+}
+
+.task-list-item-checkbox {
+margin-left: -20px;
+vertical-align: middle;
+pointer-events: none;
+}
+</style>
+    
+</head>
+<body class="vscode-body vscode-light">
+<h2 id="introduction">Introduction</h2>
+<p>Please note that this is a work in progress article and might be corrected, updated or amended in the future. It possibly contains errors (all mine) and to be careful when using the results presented here.</p>
+<p>Whisper is a deep learning based automatic speech recognition system that processes an audio file and produces a json file containing information about the words and sentences spoken in the audio.</p>
+<p>Pyannote is a set of tools and models for building speaker identification or diarization pipeline. It is able to segment the audio and identify different speakers in each segment.</p>
+<p>If we would like to take an audio file and get the text of what was spoken but also which speaker said it, we have to use both the tools. These two tools work independently and produce separate outputs. Thus, we have to combine these two outputs or fuse these outputs.</p>
+<p>In this article, we will go over the outputs of whisper and pyannote, the different strategies of fusing the data and the quality of the output using these techniques (at least for our data) using standard diarization metrics.</p>
+<p>We also have all these fusion methods in a github repo and can be tested on your audio source to decide which one works best for you here at <a href="https://github.com/mochan-b/whisper_pyannote_fusion">https://github.com/mochan-b/whisper_pyannote_fusion</a>.</p>
+<h2 id="why-even-the-need-for-this-fusion">Why even the need for this fusion?</h2>
+<p>In first glance, this fusion should be simple. Whisper outputs segments and pyannote outputs segments. Just combine them and everything is done.</p>
+<p>The problem is that since they are independent systems they don't produce the same segments. There might be more segments in one or the other, the segments might not line up between them, one system might think something is being spoken at one point there while the other thinks nothing is being spoken there and pyannote allows overlapping segments (since different speakers can speak over one another) while whisper does not.</p>
+<p>In this article, we will investigate certain techniques to fuse the two outputs together and provide the code for it.</p>
+<h2 id="asr-and-diarization-metrics">ASR and Diarization Metrics</h2>
+<p>We will compare the different methods using metrics since just looking at the results can be misleading. While metrics themselves can also be misleading, using it is an easy way to compare different methods and how well they do. I would also suggest looking at the output transcripts to double check the output looks good.</p>
+<h3 id="martijohn-conversation-ground-truth">Marti/John conversation ground truth</h3>
+<p>The ground truth was a refinement of the output of pyannote output. The ground truth was human checked and labeled from the pyannote initial segments. In this audio, the pyannote segmentation is very accurate with possibly one missed sub-segment and the start and end times are also very accurate. The rationale for producing ground truth data is very labor intensive and most of this was verified using audacity labels and exports.</p>
+<h3 id="asr-metrics">ASR Metrics</h3>
+<p>Given the ground truth reference text and an ASR transcriptions, the following are some of the most used metrics</p>
+<ol>
+<li><strong>Word Error Rate (WER)</strong>: This measures how many words are incorrect in the transcription. The incorrect words could be substitutions <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>S</mi></mrow><annotation encoding="application/x-tex">S</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.05764em;">S</span></span></span></span> (wrong word), insertions <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>I</mi></mrow><annotation encoding="application/x-tex">I</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.07847em;">I</span></span></span></span> (missing words) and deletions <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>D</mi></mrow><annotation encoding="application/x-tex">D</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.02778em;">D</span></span></span></span> (extra word). So, the equation for WER is (if <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi></mrow><annotation encoding="application/x-tex">N</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.10903em;">N</span></span></span></span> is the total number of words in the reference) $$
+WER = \frac{S + I + D}{N}<p class="katex-block"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow></mrow><annotation encoding="application/x-tex"></annotation></semantics></math></span><span class="katex-html" aria-hidden="true"></span></span></span></p>
+</li>
+<li><strong>Sentence Error Rate (SER)</strong>: Here we use sentences instead of characters or words. We can use as a binary metric where even a single character mismatch will give a zero score. Or, use some other measure of similarity between the sentences to give a score between 0 and 1, with 0 being no matches, 1 being a perfect match and something between as a number between 0 and 1. We use WER and CER to measure the similarity between sentences or many other versions of sentence similarity metrics.</li>
+</ol>
+<p>Since Whisper also adds punctuation in the transcription, WER can either treat each punctuation as word or ignore them. If we use the punctuation as words, small difference in punctuation can create a higher WER score when most words are correct but there is a difference in punctuation. Thus, we can have separate non-punctuation or with-punctuation WER.</p>
+<p>Character error rates can take longer to process since we have to compare each character and find the smallest change between the ground truth and transcript.</p>
+<p>These metrics are calculated using the Levensthein distance which is a dynamic programming algorithm to find the minimum set of operations to change one text to the other. Because of thus, we can also backtrack and get the sequence of operations needed to change one text to the other.</p>
+<h4 id="edit-levensthein-distance">Edit (Levensthein) Distance</h4>
+<p>The Levensthein distance is a measure of difference between two strings. Depending on if we have looking at characters or words, it is the number of edits (substitutions, inserts and deletions) of characters or words to turn a string to the other.</p>
+<p>This distance is calculated using dynamic programming. The equation is given by the following dynamic programming equation</p>
+<p class="katex-block"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>d</mi><mo stretchy="false">(</mo><msub><mi>a</mi><mi>i</mi></msub><mo separator="true">,</mo><msub><mi>b</mi><mi>j</mi></msub><mo stretchy="false">)</mo><mo>=</mo><mrow><mo fence="true">{</mo><mtable rowspacing="0.36em" columnalign="left left" columnspacing="1em"><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mi>j</mi></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow></mrow></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mtext>if </mtext><mi>i</mi><mo>=</mo><mn>0</mn></mrow></mstyle></mtd></mtr><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mi>i</mi></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow></mrow></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mtext>if </mtext><mi>j</mi><mo>=</mo><mn>0</mn></mrow></mstyle></mtd></mtr><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mi>d</mi><mo stretchy="false">(</mo><msub><mi>a</mi><mrow><mi>i</mi><mo>−</mo><mn>1</mn></mrow></msub><mo separator="true">,</mo><msub><mi>b</mi><mrow><mi>j</mi><mo>−</mo><mn>1</mn></mrow></msub><mo stretchy="false">)</mo></mrow></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow></mrow></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mtext>if </mtext><msub><mi>a</mi><mi>i</mi></msub><mo>=</mo><msub><mi>b</mi><mi>j</mi></msub></mrow></mstyle></mtd></mtr><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mn>1</mn><mo>+</mo><mi>min</mi><mo>⁡</mo><mrow><mo fence="true">{</mo><mtable rowspacing="0.36em" columnalign="left left" columnspacing="1em"><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mi>d</mi><mo stretchy="false">(</mo><msub><mi>a</mi><mrow><mi>i</mi><mo>−</mo><mn>1</mn></mrow></msub><mo separator="true">,</mo><msub><mi>b</mi><mi>j</mi></msub><mo stretchy="false">)</mo></mrow></mstyle></mtd></mtr><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mi>d</mi><mo stretchy="false">(</mo><mrow><msub><mi>a</mi><mi>i</mi></msub><mo separator="true">,</mo><msub><mi>b</mi><mrow><mi>j</mi><mo>−</mo><mn>1</mn></mrow></msub></mrow><mo stretchy="false">)</mo></mrow></mstyle></mtd></mtr><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mi>d</mi><mo stretchy="false">(</mo><msub><mi>a</mi><mrow><mi>i</mi><mo>−</mo><mn>1</mn></mrow></msub><mo separator="true">,</mo><msub><mi>b</mi><mrow><mi>j</mi><mo>−</mo><mn>1</mn></mrow></msub><mo stretchy="false">)</mo></mrow></mstyle></mtd></mtr></mtable></mrow></mrow></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow></mrow></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mtext>otherwise </mtext><msub><mi>a</mi><mi>i</mi></msub><mo mathvariant="normal">≠</mo><msub><mi>b</mi><mi>j</mi></msub><mo separator="true">,</mo><mi>i</mi><mo mathvariant="normal">≠</mo><mn>0</mn><mo separator="true">,</mo><mi>j</mi><mo mathvariant="normal">≠</mo><mn>0</mn></mrow></mstyle></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">d(a_i, b_j) = 
+\begin{cases}
+j &amp;&amp; \text{if } i = 0 \\
+i &amp;&amp; \text{if } j = 0 \\
+d(a_{i-1}, b_{j-1}) &amp;&amp; \text{if } a_i = b_j \\
+1 + \min
+\begin{cases}
+d(a_{i-1}, b_j) \\
+d({a_i, b_{j-1}}) \\
+d(a_{i-1}, b_{j-1}) \\
+\end{cases}
+&amp;&amp; \text{otherwise } a_i \ne b_j, i \ne 0, j \ne 0
+\end{cases}
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:1.0361em;vertical-align:-0.2861em;"></span><span class="mord mathnormal">d</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.05724em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:8.64em;vertical-align:-4.07em;"></span><span class="minner"><span class="mopen"><span class="delimsizing mult"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:4.45em;"><span style="top:-1.366em;"><span class="pstrut" style="height:4.416em;"></span><span class="delimsizinginner delim-size4"><span>⎩</span></span></span><span style="top:-1.358em;"><span class="pstrut" style="height:4.416em;"></span><span style="height:2.416em;width:0.8889em;"><svg xmlns="http://www.w3.org/2000/svg" width='0.8889em' height='2.416em' style='width:0.8889em' viewBox='0 0 888.89 2416' preserveAspectRatio='xMinYMin'><path d='M384 0 H504 V2416 H384z M384 0 H504 V2416 H384z'/></svg></span></span><span style="top:-4.416em;"><span class="pstrut" style="height:4.416em;"></span><span class="delimsizinginner delim-size4"><span>⎨</span></span></span><span style="top:-5.558em;"><span class="pstrut" style="height:4.416em;"></span><span style="height:2.416em;width:0.8889em;"><svg xmlns="http://www.w3.org/2000/svg" width='0.8889em' height='2.416em' style='width:0.8889em' viewBox='0 0 888.89 2416' preserveAspectRatio='xMinYMin'><path d='M384 0 H504 V2416 H384z M384 0 H504 V2416 H384z'/></svg></span></span><span style="top:-7.966em;"><span class="pstrut" style="height:4.416em;"></span><span class="delimsizinginner delim-size4"><span>⎧</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:3.95em;"><span></span></span></span></span></span></span><span class="mord"><span class="mtable"><span class="col-align-l"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:4.57em;"><span style="top:-7.972em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.05724em;">j</span></span></span><span style="top:-6.532em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"><span class="mord mathnormal">i</span></span></span><span style="top:-5.092em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">i</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.05724em;">j</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mclose">)</span></span></span><span style="top:-2.25em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mop">min</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen"><span class="delimsizing mult"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:2.35em;"><span style="top:-2.2em;"><span class="pstrut" style="height:3.15em;"></span><span class="delimsizinginner delim-size4"><span>⎩</span></span></span><span style="top:-2.192em;"><span class="pstrut" style="height:3.15em;"></span><span style="height:0.316em;width:0.8889em;"><svg xmlns="http://www.w3.org/2000/svg" width='0.8889em' height='0.316em' style='width:0.8889em' viewBox='0 0 888.89 316' preserveAspectRatio='xMinYMin'><path d='M384 0 H504 V316 H384z M384 0 H504 V316 H384z'/></svg></span></span><span style="top:-3.15em;"><span class="pstrut" style="height:3.15em;"></span><span class="delimsizinginner delim-size4"><span>⎨</span></span></span><span style="top:-4.292em;"><span class="pstrut" style="height:3.15em;"></span><span style="height:0.316em;width:0.8889em;"><svg xmlns="http://www.w3.org/2000/svg" width='0.8889em' height='0.316em' style='width:0.8889em' viewBox='0 0 888.89 316' preserveAspectRatio='xMinYMin'><path d='M384 0 H504 V316 H384z M384 0 H504 V316 H384z'/></svg></span></span><span style="top:-4.6em;"><span class="pstrut" style="height:3.15em;"></span><span class="delimsizinginner delim-size4"><span>⎧</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.85em;"><span></span></span></span></span></span></span><span class="mord"><span class="mtable"><span class="col-align-l"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:2.41em;"><span style="top:-4.41em;"><span class="pstrut" style="height:3.008em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">i</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.05724em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mclose">)</span></span></span><span style="top:-2.97em;"><span class="pstrut" style="height:3.008em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="mopen">(</span><span class="mord"><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.05724em;">j</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span><span class="mclose">)</span></span></span><span style="top:-1.53em;"><span class="pstrut" style="height:3.008em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">i</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.05724em;">j</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mclose">)</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.91em;"><span></span></span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:4.07em;"><span></span></span></span></span></span><span class="arraycolsep" style="width:1em;"></span><span class="col-align-l"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:4.57em;"><span style="top:-7.972em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"></span></span><span style="top:-6.532em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"></span></span><span style="top:-5.092em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"></span></span><span style="top:-2.25em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:4.07em;"><span></span></span></span></span></span><span class="arraycolsep" style="width:0.5em;"></span><span class="col-align-c"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:4.57em;"><span style="top:-7.972em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"><span class="mord text"><span class="mord">if </span></span><span class="mord mathnormal">i</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord">0</span></span></span><span style="top:-6.532em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"><span class="mord text"><span class="mord">if </span></span><span class="mord mathnormal" style="margin-right:0.05724em;">j</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord">0</span></span></span><span style="top:-5.092em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"><span class="mord text"><span class="mord">if </span></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.05724em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span><span style="top:-2.25em;"><span class="pstrut" style="height:4.41em;"></span><span class="mord"><span class="mord text"><span class="mord">otherwise </span></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel"><span class="mrel"><span class="mord vbox"><span class="thinbox"><span class="rlap"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="inner"><span class="mord"><span class="mrel"></span></span></span><span class="fix"></span></span></span></span></span><span class="mrel">=</span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.05724em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">i</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel"><span class="mrel"><span class="mord vbox"><span class="thinbox"><span class="rlap"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="inner"><span class="mord"><span class="mrel"></span></span></span><span class="fix"></span></span></span></span></span><span class="mrel">=</span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.05724em;">j</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel"><span class="mrel"><span class="mord vbox"><span class="thinbox"><span class="rlap"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="inner"><span class="mord"><span class="mrel"></span></span></span><span class="fix"></span></span></span></span></span><span class="mrel">=</span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:4.07em;"><span></span></span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></p>
+<p>If <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>a</mi><mi>i</mi></msub><mo>=</mo><msub><mi>b</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">a_i = b_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.9805em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.05724em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span> , the distance doesn't change. Otherwise, we either do a deletion, insertion or substitution and hence, the score changes by 1.</p>
+<p>As we mentioned above, <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>a</mi><mi>i</mi></msub><mo separator="true">,</mo><msub><mi>b</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">a_i, b_j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.9805em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.05724em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span> can be characters, words or sentences to give the type of result we want.</p>
+<p>To implement this in python, we would start with a matrix of <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>m</mi><mo>×</mo><mi>n</mi></mrow><annotation encoding="application/x-tex">m \times n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6667em;vertical-align:-0.0833em;"></span><span class="mord mathnormal">m</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> where <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>m</mi></mrow><annotation encoding="application/x-tex">m</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">m</span></span></span></span> is the length of the reference string and <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span> is the length of the transcription (characters, words or sentences).  We iterate over the <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>m</mi></mrow><annotation encoding="application/x-tex">m</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.4306em;"></span><span class="mord mathnormal">m</span></span></span></span> and note that we will always reference a past value which we have calculated.</p>
+<pre><code class="language-python"><span class="hljs-comment"># Initialize the matrix  </span>
+matrix = [[<span class="hljs-number">0</span> <span class="hljs-keyword">for</span> x <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-built_in">len</span>(hypothesis) + <span class="hljs-number">1</span>)] <span class="hljs-keyword">for</span> y <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-built_in">len</span>(reference) + <span class="hljs-number">1</span>)]  
+
+<span class="hljs-comment"># Fill the first row and column  </span>
+<span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-built_in">len</span>(reference) + <span class="hljs-number">1</span>):  
+matrix[i][<span class="hljs-number">0</span>] = i  
+<span class="hljs-keyword">for</span> j <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-built_in">len</span>(hypothesis) + <span class="hljs-number">1</span>):  
+matrix[<span class="hljs-number">0</span>][j] = j  
+
+<span class="hljs-comment"># Calculate the costs using dynamic programming  </span>
+<span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">1</span>, <span class="hljs-built_in">len</span>(reference) + <span class="hljs-number">1</span>):  
+<span class="hljs-keyword">for</span> j <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">1</span>, <span class="hljs-built_in">len</span>(hypothesis) + <span class="hljs-number">1</span>):  
+    <span class="hljs-keyword">if</span> reference[i - <span class="hljs-number">1</span>] == hypothesis[j - <span class="hljs-number">1</span>]:  
+        substitution_cost = <span class="hljs-number">0</span>  
+    <span class="hljs-keyword">else</span>:  
+        substitution_cost = <span class="hljs-number">1</span>  
+
+    matrix[i][j] = <span class="hljs-built_in">min</span>(matrix[i - <span class="hljs-number">1</span>][j] + <span class="hljs-number">1</span>,  <span class="hljs-comment"># Deletion  </span>
+                       matrix[i][j - <span class="hljs-number">1</span>] + <span class="hljs-number">1</span>,  <span class="hljs-comment"># Insertion  </span>
+                       matrix[i - <span class="hljs-number">1</span>][j - <span class="hljs-number">1</span>] + substitution_cost)  <span class="hljs-comment"># Substitution</span>
+</code></pre>
+<p>To get the list of edits that we need to do, we can use back-tracing. We keep another matrix of what operation to was used for <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>i</mi></mrow><annotation encoding="application/x-tex">i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6595em;"></span><span class="mord mathnormal">i</span></span></span></span> and <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>j</mi></mrow><annotation encoding="application/x-tex">j</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.854em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.05724em;">j</span></span></span></span>. Then, we back-trace the sequence of operations to get the exact sequence of edits need to turn transcript to the ground truth. The method that does this can be found here.
+<a href="https://github.com/mochan-b/whisper_pyannote_fusion/blob/main/whisper_pyannote_fusion/wer.py#L64">https://github.com/mochan-b/whisper_pyannote_fusion/blob/main/whisper_pyannote_fusion/wer.py#L64</a></p>
+<h3 id="diarization-metrics">Diarization Metrics</h3>
+<p>For diarization metrics, we ignore the actual text and only focus on when the different speakers were speaking. We thus have the following in the ground truth for diarization: the time intervals where speaker <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>i</mi></mrow><annotation encoding="application/x-tex">i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.6595em;"></span><span class="mord mathnormal">i</span></span></span></span> is speaking. If two speakers are speaking at the same time, there will be two different intervals overlapping for the same speakers.</p>
+<p>The following are common metrics which rely on interval intersections between the ground truth and the segments and the speaker labels from the diarization system:</p>
+<ol>
+<li><strong>Diarization Error Rate(DER)</strong>: Percentage of time the segments do not match the ground truth</li>
+<li><strong>False Alarm</strong>: No speaker is speaking (or perhaps music is playing) but is marked as a speech segment</li>
+<li><strong>Missed Speech Rate</strong>: Percentage of speech that is missed and not attributed to any of the speakers</li>
+</ol>
+<p>As mentioned that the ground truth is a refinement of the pyannote output and thus we expect the diarization metrics to measure very close to the ground truth.</p>
+<h2 id="metrics-for-asr-and-diarization">Metrics for ASR and Diarization</h2>
+<p>Since we want to measure both ASR and diarization at the same time, let us examine metrics that we have for these. Both of these measures are an adaptation of the previous metrics for our purpose.</p>
+<ul>
+<li><strong>DE-WER</strong>: Word error rate when the diarization is correct. If the diarization is wrong, the affected words are also marked error.</li>
+<li><strong>WE-DER</strong>: Diarization error rate when the words are correct. If the word is transcribed wrong, it is also marked as error if the word transcription is wrong.</li>
+</ul>
+<p>ASR metrics are based on text (word, character or sentence) error but diarization error is based on time. Ideally, we would have the interval for each word in the ground truth. Whisper does produce intervals for each word but that is not available in our ground truth data since is a lot of work to label each word's intervals.</p>
+<p>Thus, we will do <strong>DE-WER-I</strong> where we will first find the best match of a diarization segment to the ground truth segment and then calculate the word error rate on it. Since our ground truth is a refinement of pyannote output as well, this seems like a reasonable measure to use here.</p>
+<p>This method has obvious problems when a segment is broken into pieces or there are segments that do not exist in the transcript.</p>
+<p>A better algorithm would be separate all the dialog of each speaker and do DE-WER on them. We would still need some method to match which broken segments belong to which segment and a way to remove segments not present in the transcript. There is marginal gain in our case and so leave it for future work where we do have transcripts that show a lot of such anomalies.</p>
+<p>In our transcript, we had one case of a broken long sentence in transcript that was broken in the ground truth and 3-4 short utterances in the ground truth that were not in the transcription. We modified the ground truth and ignored the sub-second utterances for our error calculation.</p>
+<h2 id="fusion-algorithms-and-results">Fusion Algorithms and Results</h2>
+<p>We will explore the fusion techniques and see what errors are possible to be made here.</p>
+<h3 id="using-whisper-segments">Using Whisper segments</h3>
+<p>We will start with whisper segments and then attach a speaker to each segment. We will find the segment with the largest overlap from PyAnnote and use the label from there.</p>
+<p><img src="/assets/wpf_method1.png" alt="Method1"></p>
+<p>The obvious problems are like above. The text &quot;Good morning, Marti. Good morning, John&quot; are spoken by different speakers (ones that pyannote picks up but whisper does not).</p>
+<h3 id="using-pyannote-segments">Using PyAnnote Segments</h3>
+<p>We can start with PyAnnote segments and then use the closest whisper segment. This is similar to the previous method but with the whisper and pyannote segments switched.</p>
+<p>This can be problematic since whisper might create a single segment for two different people talking like we described above.</p>
+<p>Another example is that the whisper and pyannote create different intervals and whisper sometimes misses different speakers. In the image below, speaker 2 is missed and the utterance &quot;That's right&quot; is in the same segment as the dialog from another speaker.</p>
+<p><img src="/assets/wpf_method2.png" alt="Method2"></p>
+<h3 id="using-pyannote-segments-to-whisper-words">Using PyAnnote Segments to Whisper Words</h3>
+<p>Both of the above methods have their own problems.</p>
+<p>Since whisper can output per word with the time interval for each word, we can use it to map each word to a pyannote interval or to a closest one.</p>
+<p>Whisper does not do super accurate word time intervals and so some words are attributed to the wrong speaker.</p>
+<p>In the following, we can see that the intervals given by whisper for words does not fall into the intervals given by pyannote (here pyannote is right and whisper intervals are incorrect).</p>
+<p><img src="/assets/wpf_method4.png" alt="Method3"></p>
+<h3 id="using-pyannote-segments-to-run-whisper">Using PyAnnote Segments to run Whisper</h3>
+<p>Another method is to first run pyannote and then run whisper on each of the segments to get accurate transcriptions. This way we might have an accurate text for each segment.</p>
+<p>As we can see in the figure below, it did a great job with the problem we had before.</p>
+<p><img src="/assets/wpf_method3.png" alt="Method4"></p>
+<p>The problem is that whisper does not have the full context of the text before hand and it does lose some state information as even if we are giving it the same audio but in different segments.</p>
+<p>Another problem is that when multiple speakers are speaking, it can pick up any of the speakers text.</p>
+<p>If we look at the errors, we have a sample of the following errors:</p>
+<pre><code class="language-text">marti/marty 
+oren/orin -and oren/orin 
+marti/marty chatgpt/chat +gpt as/it +is 
+...
+chatgpt/chachi +pate levine/levin 
+...
+dall/dali -e dall/dali -e 
+...
+scholarphi/scholarfy 
+niloufar/ilifar i/ischool -school 
+...
+yejin/agent 
+marti/marty 
+twimlai/twimmelai 
+</code></pre>
+<h4 id="using-the-same-initial-prompt">Using the same Initial Prompt</h4>
+<p>Most are names and technical terms that would not be possible for the ASR to know. We do send in the <code>initial_prompt</code> with the speaker name and it at least gets <code>Marti</code> correct.</p>
+<p>So, a smaller tune of the algorithm is to send the same <code>initial_prompt</code> we send to the initial whisper data, we get mode collapse and the transcription has completely unrelated to the audio or just repeats a small piece of text over and over again.</p>
+<h4 id="using-a-summarized-initial-prompt">Using a summarized initial prompt</h4>
+<p>If we summarize the initial prompt to a list of the most important words, the output does improve but is still below not using any prompts.</p>
+<h3 id="using-pyannote-segments-to-run-whisper-with-previous-whisper-run-hints">Using PyAnnote segments to run Whisper with previous Whisper run hints</h3>
+<p>Another addition we can do is to give hints from a previous whisper run. We find all the whisper intervals that intersect with our pyannote interval and create a hint string with the text from those whisper segments.  We then use <code>spacy</code> to remove common words and then feed in as <code>prompt</code> to whisper sub-runs.</p>
+<p>However, this seems to produce worse results. It did not seem to pick up hints on names and spellings from the previous transcripts and so as a technique does not work.</p>
+<pre><code class="language-text">marti/marty 
+oren/orin -and oren/orin 
+marti/marty chatgpt/chat +gpt as/it +is 
+</code></pre>
+<h3 id="adding-word-corrections">Adding word corrections</h3>
+<p>Since adding the <code>initial_prompt</code> seems to be problematic with segment by segment whisper, it makes sense to go through the text and replace words that are very close with the ones from the original whisper transcript.</p>
+<p>We use the Levinstein distance dynamic programming method but find the relevant words that can be substituted. Since the Levensthein distance method is falliable in the substitution, for example a broken word into two or an extra word can be turned into a completely different substitution.</p>
+<p>We only substitute if the words are phonetically similar. We do this by using metaphone algorithm for similarity.</p>
+<p>The following shows the substitutions made for our ground truth.</p>
+<pre><code class="language-text">Marty.   Marti.
+Orrin   Orin
+Orin   Orin
+Oren   Orin
+Orin   Oren
+GPT-3.   GPT-3…
+Scholarfy,   Scholarify
+than   then
+</code></pre>
+<p>It is successful in converting the names that were given in the prompt (Marti). However, it also makes moves mistakes from original whisper over and actually the DE-WER score decreases.</p>
+<p>Depending on the amount of missed text, the window size of the Levensthein distance has to be increased and that will incur additional time. We are using <code>100</code> for the tests and seems to be fine but for lower values might end up not being able to successfully complete.</p>
+<h3 id="using-whisperx-alignment">Using WhisperX Alignment</h3>
+<p>WhisperX has an algorithm for aligning whisper output with the sounds in the audio file using <code>wav2vec</code>. This does not necessitate running whisper second time but it does require running <code>wav2vec</code>.</p>
+<p>This method does not always seem to succeed and does occasionally crash.</p>
+<p>However, it does seem to align the words well as seen in the good morning segments we discussed before.</p>
+<p><img src="/assets/wpf_method7.png" alt="Method7"></p>
+<h2 id="metrics">Metrics</h2>
+<p>Below are the metrics for the different methods and as we described above DE-WER is probably the best metric to compare the methods against.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Method</th>
+<th style="text-align:center">WER</th>
+<th style="text-align:center">WER(Norm)</th>
+<th style="text-align:center">DER</th>
+<th style="text-align:right">DE-WER</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left">Whisper</td>
+<td style="text-align:center">0.119</td>
+<td style="text-align:center">0.084</td>
+<td style="text-align:center">0.002</td>
+<td style="text-align:right"></td>
+</tr>
+<tr>
+<td style="text-align:left">Method1: Fuse Pyannote to Whisper Segments</td>
+<td style="text-align:center">0.119</td>
+<td style="text-align:center">0.084</td>
+<td style="text-align:center">0.134</td>
+<td style="text-align:right">0.842</td>
+</tr>
+<tr>
+<td style="text-align:left">Method2: Fuse Whisper to Pyannote Segments</td>
+<td style="text-align:center">0.900</td>
+<td style="text-align:center">0.875</td>
+<td style="text-align:center">0.233</td>
+<td style="text-align:right">0.812</td>
+</tr>
+<tr>
+<td style="text-align:left">Method3: Fuse Whisper Words to Pyannote Segments</td>
+<td style="text-align:center">0.119</td>
+<td style="text-align:center">0.084</td>
+<td style="text-align:center">0.233</td>
+<td style="text-align:right">0.209</td>
+</tr>
+<tr>
+<td style="text-align:left">Method4: Run Whisper on Pyannote Segments</td>
+<td style="text-align:center">0.016</td>
+<td style="text-align:center">0.010</td>
+<td style="text-align:center">0.002</td>
+<td style="text-align:right">0.008</td>
+</tr>
+<tr>
+<td style="text-align:left">Method5: Run Whisper on Pyannote Segments with Hints</td>
+<td style="text-align:center">0.015</td>
+<td style="text-align:center">0.009</td>
+<td style="text-align:center">0.002</td>
+<td style="text-align:right">0.007</td>
+</tr>
+<tr>
+<td style="text-align:left">Method6: Run Whisper on Pyannote Segments + Whisper Corrections</td>
+<td style="text-align:center">0.016</td>
+<td style="text-align:center">0.010</td>
+<td style="text-align:center">0.002</td>
+<td style="text-align:right">0.008</td>
+</tr>
+<tr>
+<td style="text-align:left">Method7: WhisperX words to Pyannote Segments</td>
+<td style="text-align:center">0.119</td>
+<td style="text-align:center">0.084</td>
+<td style="text-align:center">0.002</td>
+<td style="text-align:right">0.084</td>
+</tr>
+<tr>
+<td style="text-align:left"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:center"></td>
+<td style="text-align:right"></td>
+</tr>
+</tbody>
+</table>
+<h2 id="conclusion">Conclusion</h2>
+<p>The best method here is to run pyannote first and then run whisper on each of the segments of pyannote.</p>
+<p>We do lose the ability to use an effective <code>initial_prompt</code> to make sure names, acronyms and institutions are spelled correctly.</p>
+<p>If the segments are nicely split apart, then the first 3 of the algorithms would work well. Otherwise the last method of finding those words and replacing them with the correct spellings could work but also introduce extra errors.</p>
+<p>Thus, the score for the corrections are slightly worse than the uncorrected ones. Thus, the long form whisper has better names from the hints while whisper on segments have better actual word transcribed. The difference here boils down to a few words only though.</p>
+<p>Finally, the biggest errors are names, acronyms and other institution names. One solution is that we could have them all in the initial prompt. However, it is hard to know when errors have happened without doing manual checks.</p>
+<p>The correct spelling for some of those names would require a web-search since it requires the complex knowledge of the personal and professional connections of the speakers, the institutions and companies that are related and technological acronyms and specific words that are not in the common lexicon. Here, LLMs would help but designing such a system that can find all of these, fix them without making errors and do so to improve the transcript is beyond the scope here but an important step to improving ASR and increasing the quality of the transcripts.</p>
+
+    <script async src="https://cdn.jsdelivr.net/npm/katex-copytex@latest/dist/katex-copytex.min.js"></script>
+    
+</body>
